@@ -4,16 +4,157 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Wonkle</title>
-  <style>
-    body { font-family: system-ui, sans-serif; line-height: 1.5; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
-    blockquote { white-space: pre-wrap; margin: 1rem 0; padding: 0.5rem 1rem; border-left: 3px solid #888; }
-    button { font: inherit; margin: 0.2rem; padding: 0.4rem 0.8rem; }
-    button.selected { outline: 3px solid currentColor; }
+  
+<style>
+    @font-face {
+      font-family: 'Coral Pixels';
+      src: url('/fonts/Coral_Pixels/CoralPixels-Regular.ttf') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'Libre Barcode 39 Text';
+      src: url('/fonts/Libre_Barcode_39_Text/LibreBarcode39Text-Regular.ttf') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'Noto Serif';
+      src: url('/fonts/Noto_Serif/NotoSerif-VariableFont_wdth,wght.ttf') format('truetype');
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'Noto Serif';
+      src: url('/fonts/Noto_Serif/NotoSerif-Italic-VariableFont_wdth,wght.ttf') format('truetype');
+      font-weight: 100 900;
+      font-style: italic;
+      font-display: swap;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Noto Serif', Georgia, serif;
+      background: #dffcde;
+      color: #000;
+      line-height: 1.5;
+      max-width: 40rem;
+      margin: 0 auto;
+      padding: 0 1rem 3rem;
+    }
+
+    h1 {
+      font-family: 'Coral Pixels', sans-serif;
+      font-size: clamp(2.2rem, 9vw, 3.4rem);
+      text-align: center;
+      letter-spacing: 0.04em;
+      color: #000;
+      margin: 0.75rem 0 0.25rem;
+    }
+    h2 {
+      font-family: 'Noto Serif', Georgia, serif;
+      color: #000;
+    }
+    #player, #participants {
+      font-family: 'Coral Pixels', sans-serif;
+      color: #000;
+      font-size: 0.85rem;
+      text-align: center;
+      margin: 0.2rem 0;
+    }
+    blockquote {
+      white-space: pre-wrap;
+      margin: 1rem 0;
+      padding: 0.75rem 1rem;
+      border: 2px solid #000;
+      border-radius: 6px;
+      background: #000;
+      color: #fff;
+    }
+    button {
+      font: inherit;
+      font-weight: bold;
+      margin: 0.25rem;
+      padding: 0.5rem 0.9rem;
+      color: #000;
+      background: #c1f2bf;
+      border: 2px solid #000;
+      border-radius: 4px;
+      box-shadow: 2px 2px 0 #000;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { filter: brightness(1.08); }
+    button:active:not(:disabled) { box-shadow: none; transform: translate(2px, 2px); }
+    button:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+    button.selected { background: #000; color: #fff; }
+    .result {
+      border: 2px solid #000;
+      border-left: 6px solid #2f7a2a;
+      background: #c1f2bf;
+      border-radius: 0 10px 10px 0;
+      padding: 0.75rem 1rem;
+      margin: 1.25rem 0;
+    }
+    .result.wrong { border-left-color: #c02626; }
+    .result blockquote { margin: 0 0 0.5rem; padding: 0; border: none; background: none; color: #000; }
+    .verdict { margin: 0; font-weight: bold; color: #2f7a2a; }
+    .result.wrong .verdict { color: #c02626; }
+    .jump {
+      background: none;
+      border: none;
+      margin: 0;
+      padding: 0;
+      color: #2f7a2a;
+      text-decoration: underline;
+      cursor: pointer;
+      font-weight: normal;
+      box-shadow: none;
+    }
+    .jump:hover { color: #000; }
+    #app img {
+      display: block;
+      width: min(400px, 90%);
+      height: auto;
+      margin: 1.5rem auto;
+      border: 3px solid #000;
+      border-radius: 14px;
+    }
+    #app p { margin: 1rem 0; }
+    footer { font-family: 'Coral Pixels', sans-serif; text-align: center; font-size: 0.7rem; color: #5a6e5a; margin-top: 2.5rem; }
+    .blink { animation: blink 1s steps(2, start) infinite; }
+    @keyframes blink { to { visibility: hidden; } }
+    #mini { display: none; }
+    body.minimized > *:not(#mini) { display: none; }
+    body.minimized #mini {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: fixed;
+      inset: 0;
+      text-align: center;
+    }
+    #mini .cat { font-size: clamp(3rem, 30vmin, 7rem); }
+    #mini p {
+      font-family: Impact, 'Arial Black', sans-serif;
+      text-transform: uppercase;
+      color: #000;
+      margin: 0.5rem 1rem 0;
+    }
   </style>
 </head>
 <body>
   <h1>Wonkle</h1>
+  <p id="player">test</p>
+  <p id="participants">test</p>
   <div id="app"><p>Connecting…</p></div>
+  <footer>wonkacord.<span class="blink">▮</span></footer>
+  <div id="mini">
+    <div class="cat">🐱</div>
+    <p>wonkle is minimized!</p>
+  </div>
   <script type="module" src="/main.js"></script>
 </body>
 </html>

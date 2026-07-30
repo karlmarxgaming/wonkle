@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1"
