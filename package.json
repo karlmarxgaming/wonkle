@@ -1,0 +1,9 @@
+{
+  "name": "wonkle",
+  "private": true,
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "build": "npm run build -w client",
+    "start": "node server/index.js"
+  }
+}

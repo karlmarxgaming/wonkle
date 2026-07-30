@@ -1,0 +1,10 @@
+{
+  "name": "@wonkle/server",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}

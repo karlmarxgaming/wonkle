@@ -1,0 +1,14 @@
+{
+  "name": "@wonkle/client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  }
+}
