@@ -26,7 +26,7 @@ const MAX_PER_AUTHOR = 2;
 // TEST: lets all 5 messages come from the same author.
 const TEST_ALLOW_SAME_AUTHOR = false;
 // TEST: lets a player replay (overwrites their stored play instead of blocking).
-const TEST_ALLOW_REPLAY = true;
+const TEST_ALLOW_REPLAY = false;
 
 const db = new Database(fileURLToPath(new URL('wonkle.db', import.meta.url)));
 db.exec(`
