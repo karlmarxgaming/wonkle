@@ -50,16 +50,10 @@
       font-size: clamp(2.2rem, 9vw, 3.4rem);
       text-align: center;
       letter-spacing: 0.04em;
-      color: #000;
       margin: 0.75rem 0 0.25rem;
-    }
-    h2 {
-      font-family: 'Noto Serif', Georgia, serif;
-      color: #000;
     }
     #player, #participants {
       font-family: 'Coral Pixels', sans-serif;
-      color: #000;
       font-size: 0.85rem;
       text-align: center;
       margin: 0.2rem 0;
@@ -121,7 +115,18 @@
       border: 3px solid #000;
       border-radius: 14px;
     }
-    #app p { margin: 1rem 0; }
+    #app p {text-align: center; margin: 1rem 0; }
+    #app .pfp {
+      display: inline-block;
+      width: 1.5em;
+      height: 1.5em;
+      margin: 0 0.4em 0 0;
+      border: 1px solid #000;
+      border-radius: 50%;
+      vertical-align: -0.4em;
+    }
+    .others { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; margin: 1rem 0 1.5rem; }
+    #app .others img { width: 200px; margin: 0; border-width: 2px; border-radius: 8px; }
     footer { font-family: 'Coral Pixels', sans-serif; text-align: center; font-size: 0.7rem; color: #5a6e5a; margin-top: 2.5rem; }
     .blink { animation: blink 1s steps(2, start) infinite; }
     @keyframes blink { to { visibility: hidden; } }
@@ -147,8 +152,8 @@
 </head>
 <body>
   <h1>Wonkle</h1>
-  <p id="player">test</p>
-  <p id="participants">test</p>
+  <p id="player"></p>
+  <p id="participants"></p>
   <div id="app"><p>Connecting…</p></div>
   <footer>wonkacord.<span class="blink">▮</span></footer>
   <div id="mini">
