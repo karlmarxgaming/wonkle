@@ -16,6 +16,8 @@ let puzzle;
 let me;
 let others = [];
 const answers = [];
+// hinted[i] === true means that message was solved with the hint open
+const hinted = [];
 
 // requests to the backend must use discords /.proxy prefix
 // the activity proxy strips it before forwarding through the URL mapping.
@@ -292,6 +294,7 @@ function showQuestion() {
       hint.textContent = 'No surrounding messages';
       return;
     }
+    hinted[i] = true;
     if (context.before) before.append(contextMessage(context.before));
     if (context.after) after.append(contextMessage(context.after));
     hint.remove();
@@ -304,7 +307,7 @@ function showQuestion() {
 
 async function submit() {
   app.replaceChildren(el('p', 'Grading…'));
-  const result = await api('guess', { answers });
+  const result = await api('guess', { answers, hints: puzzle.messages.map((_, i) => !!hinted[i]) });
   const dataUrl = await showResults(result);
   try {
     const all = [{ score: result.score, image: dataUrl }, ...others].sort((a, b) => b.score - a.score);
@@ -353,7 +356,7 @@ function loadImage(src) {
 }
 
 
-async function resultsImage(score, right) {
+async function resultsImage(score, right, hints = []) {
   const name = me.global_name ?? me.username;
   const W = 420;
   const H = 250;
@@ -407,7 +410,8 @@ async function resultsImage(score, right) {
   ctx.textAlign = 'left';
 
   right.forEach((ok, i) => {
-    ctx.fillStyle = ok ? '#6aaa64' : '#d64545';
+    // yellow: correct, but the hint was open for that one
+    ctx.fillStyle = ok ? (hints[i] ? '#c9b458' : '#6aaa64') : '#d64545';
     ctx.beginPath();
     ctx.roundRect(28 + i * 76, 120, 64, 64, 12);
     ctx.fill();
@@ -422,11 +426,11 @@ async function resultsImage(score, right) {
   return canvas.toDataURL('image/png');
 }
 
-async function showResults({ score, answers: given, correct, links, alreadyPlayed }) {
+async function showResults({ score, answers: given, correct, links, hints, alreadyPlayed }) {
   const byId = Object.fromEntries(puzzle.options.map((o) => [o.id, o]));
   const names = Object.fromEntries(puzzle.options.map((o) => [o.id, o.name]));
   const right = given.map((id, i) => id === correct[i]);
-  const dataUrl = await resultsImage(score, right);
+  const dataUrl = await resultsImage(score, right, hints ?? []);
   const img = new Image();
   img.src = dataUrl;
   img.style.cursor = 'pointer';

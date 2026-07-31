@@ -41,6 +41,7 @@ db.exec(`
     score INTEGER NOT NULL,
     answers TEXT NOT NULL,
     image TEXT,
+    hints TEXT,
     PRIMARY KEY (puzzle_date, user_id)
   );
   CREATE TABLE IF NOT EXISTS posts (
@@ -49,11 +50,15 @@ db.exec(`
     message_id TEXT NOT NULL
   );
 `);
+// CREATE TABLE IF NOT EXISTS leaves existing tables alone, so new columns
+// need this to reach databases that predate them.
+try { db.exec('ALTER TABLE plays ADD COLUMN hints TEXT'); } catch {}
+
 const getPuzzleRow = db.prepare('SELECT data FROM puzzles WHERE date = ?');
 const insertPuzzle = db.prepare('INSERT INTO puzzles (date, data) VALUES (?, ?)');
 const updatePuzzle = db.prepare('UPDATE puzzles SET data = ? WHERE date = ?');
-const getPlay = db.prepare('SELECT score, answers FROM plays WHERE puzzle_date = ? AND user_id = ?');
-const upsertPlay = db.prepare('INSERT OR REPLACE INTO plays (puzzle_date, user_id, username, score, answers) VALUES (?, ?, ?, ?, ?)');
+const getPlay = db.prepare('SELECT score, answers, hints FROM plays WHERE puzzle_date = ? AND user_id = ?');
+const upsertPlay = db.prepare('INSERT OR REPLACE INTO plays (puzzle_date, user_id, username, score, answers, hints) VALUES (?, ?, ?, ?, ?, ?)');
 const getPost = db.prepare('SELECT channel_id, message_id FROM posts WHERE puzzle_date = ?');
 const upsertPost = db.prepare('INSERT OR REPLACE INTO posts (puzzle_date, channel_id, message_id) VALUES (?, ?, ?)');
 const setPlayImage = db.prepare('UPDATE plays SET image = ? WHERE puzzle_date = ? AND user_id = ?');
@@ -312,7 +317,13 @@ app.get('/api/puzzle', requireUser, async (req, res) => {
     hints: puzzle.messages.map((m) => m.hint ?? { before: null, after: null }),
     options: puzzle.options,
     played: prior
-      ? { score: prior.score, answers: JSON.parse(prior.answers), correct: puzzle.messages.map((m) => m.authorId), links: messageLinks(puzzle) }
+      ? {
+          score: prior.score,
+          answers: JSON.parse(prior.answers),
+          hints: JSON.parse(prior.hints ?? 'null'),
+          correct: puzzle.messages.map((m) => m.authorId),
+          links: messageLinks(puzzle),
+        }
       : null,
   });
 });
@@ -323,15 +334,24 @@ app.post('/api/guess', requireUser, async (req, res) => {
   const correct = puzzle.messages.map((m) => m.authorId);
   const prior = getPlay.get(date, req.user.id);
   if (prior && !TEST_ALLOW_REPLAY) {
-    return res.json({ score: prior.score, answers: JSON.parse(prior.answers), correct, links: messageLinks(puzzle), alreadyPlayed: true });
+    return res.json({
+      score: prior.score,
+      answers: JSON.parse(prior.answers),
+      hints: JSON.parse(prior.hints ?? 'null'),
+      correct,
+      links: messageLinks(puzzle),
+      alreadyPlayed: true,
+    });
   }
   const { answers } = req.body;
   if (!Array.isArray(answers) || answers.length !== puzzle.messages.length) {
     return res.status(400).json({ error: `expected ${puzzle.messages.length} answers` });
   }
+  // which messages were solved with a hint, for the yellow squares
+  const hints = puzzle.messages.map((_, i) => Array.isArray(req.body.hints) && !!req.body.hints[i]);
   const score = correct.filter((id, i) => answers[i] === id).length;
-  upsertPlay.run(date, req.user.id, req.user.username, score, JSON.stringify(answers));
-  res.json({ score, answers, correct, links: messageLinks(puzzle) });
+  upsertPlay.run(date, req.user.id, req.user.username, score, JSON.stringify(answers), JSON.stringify(hints));
+  res.json({ score, answers, hints, correct, links: messageLinks(puzzle) });
 });
 
 app.post('/api/publish', requireUser, async (req, res) => {
