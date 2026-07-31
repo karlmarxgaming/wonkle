@@ -1,5 +1,9 @@
 import { DiscordSDK } from '@discord/embedded-app-sdk';
 
+// DEBUG=true in .env, then rebuild. Players can't open devtools inside
+// Discord, so diagnostics go to the server log instead.
+const DEBUG = import.meta.env.DEBUG === 'true';
+
 const CLIENT_ID = import.meta.env.DISCORD_CLIENT_ID;
 const app = document.getElementById('app');
 const player = document.getElementById('player');
@@ -39,9 +43,6 @@ function status(msg) {
   app.replaceChildren(el('p', msg));
 }
 
-// DEBUG=true in .env, then rebuild. Players can't open devtools inside
-// Discord, so diagnostics go to the server log instead.
-const DEBUG = import.meta.env.DEBUG === 'true';
 
 function report(stage, detail = '') {
   if (!DEBUG) return;
@@ -54,6 +55,29 @@ function report(stage, detail = '') {
 
 // must match the server's rollover, or the card is dated a different day
 const puzzleDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+
+// avatar size for avatar previews in options and hints.
+const AVATAR_SIZE = 128;
+const preloaded = [];
+
+function preload(src) {
+  const img = new Image();
+  img.src = src;
+  preloaded.push(img);
+}
+
+// warms the option avatars plus everything a hint would show, so neither
+// pops in after the click
+function preloadPuzzle(puzzle) {
+  for (const option of puzzle.options) preload(avatarUrl(option.id, option.avatar, AVATAR_SIZE));
+  for (const hint of puzzle.hints ?? []) {
+    for (const side of [hint?.before, hint?.after]) {
+      if (!side) continue;
+      preload(avatarUrl(side.id, side.avatar, AVATAR_SIZE));
+      for (const url of side.images ?? []) preload(url);
+    }
+  }
+}
 
 // falls back to the default avatar Discord derives from the user id
 const avatarUrl = (id, avatar, size) =>
@@ -131,36 +155,151 @@ function el(tag, text) {
   return node;
 }
 
+// Discord sends custom emotes as <:name:id> / <a:name:id>. Built as nodes
+// rather than innerHTML: message text is user-controlled.
+const CUSTOM_EMOJI = /<(a?):(\w+):(\d+)>/g;
+
+function renderMessage(text) {
+  const node = el('blockquote');
+  let last = 0;
+  for (const [match, animated, name, id] of text.matchAll(CUSTOM_EMOJI)) {
+    const at = text.indexOf(match, last);
+    if (at > last) node.append(text.slice(last, at));
+    const img = new Image();
+    img.className = 'emoji';
+    img.src = `https://cdn.discordapp.com/emojis/${id}.${animated ? 'gif' : 'png'}?size=48`;
+    img.alt = `:${name}:`;
+    img.title = `:${name}:`;
+    node.append(img);
+    last = at + match.length;
+  }
+  node.append(text.slice(last));
+  return node;
+}
+
+// Discord's own format: "Today at 9:08 PM", "Yesterday at ...", else a date
+function messageTime(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const clock = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(ms).setHours(0, 0, 0, 0)) / 86400000);
+  if (days === 0) return `Today at ${clock}`;
+  if (days === 1) return `Yesterday at ${clock}`;
+  return d.toLocaleDateString();
+}
+
+// a neighbouring message for hints
+function contextMessage(m) {
+  const who = el('div');
+  who.className = 'who';
+  const face = new Image();
+  face.src = avatarUrl(m.id, m.avatar, AVATAR_SIZE);
+  who.append(face);
+  const name = el('span', m.name);
+  name.className = 'name';
+  const head = el('div');
+  head.className = 'head';
+  head.append(name);
+  const body = el('div');
+  body.className = 'body';
+  body.append(head);
+  if (m.text.trim()) body.append(renderMessage(m.text));
+  if (m.images?.length) {
+    const thumbs = el('div');
+    thumbs.className = 'thumbs';
+    for (const url of m.images) {
+      const thumb = new Image();
+      // attachment URLs are signed and expire, so old puzzles lose their images
+      thumb.onerror = () => thumb.replaceWith(el('span', '<IMAGE>'));
+      thumb.src = url;
+      thumbs.append(thumb);
+    }
+    body.append(thumbs);
+  }
+  const node = el('div');
+  node.className = 'msg ctx';
+  node.append(who, body);
+  return node;
+}
+
 function showQuestion() {
   const i = answers.length;
+  const who = el('div', '🐱');
+  who.className = 'who';
+  const name = el('span', '???');
+  name.className = 'name';
+  const stamp = el('span', messageTime(puzzle.times?.[i]));
+  stamp.className = 'stamp';
+  const head = el('div');
+  head.className = 'head';
+  head.append(name, stamp);
+  const body = el('div');
+  body.className = 'body';
+  body.append(head, renderMessage(puzzle.messages[i]));
+  const msg = el('div');
+  msg.className = 'msg';
+  msg.append(who, body);
+  const before = el('div');
+  const after = el('div');
   app.replaceChildren(
     el('h2', `Message ${i + 1} of ${puzzle.messages.length}`),
-    el('blockquote', puzzle.messages[i]),
+    before,
+    msg,
+    after,
     el('p', 'Who wrote it?'),
   );
   const lock = el('button', 'Lock in');
+  lock.className = 'lock';
   lock.disabled = true;
   let selected;
   const options = el('div');
+  options.className = 'options';
   for (const option of puzzle.options) {
     const btn = el('button');
     const pfp = new Image();
     pfp.className = 'pfp';
-    pfp.src = avatarUrl(option.id, option.avatar, 64);
+    pfp.src = avatarUrl(option.id, option.avatar, AVATAR_SIZE);
     btn.append(pfp, option.name);
     btn.onclick = () => {
       selected = option.id;
       for (const b of options.children) b.classList.toggle('selected', b === btn);
       lock.disabled = false;
+      // preview the guess as if they wrote it
+      const face = new Image();
+      face.src = avatarUrl(option.id, option.avatar, AVATAR_SIZE);
+      who.replaceChildren(face);
+      name.textContent = option.name;
     };
     options.append(btn);
   }
+  const onKey = (e) => {
+    if (e.key === 'Enter' && !lock.disabled) lock.click();
+  };
+  addEventListener('keydown', onKey);
   lock.onclick = () => {
+    // showQuestion() runs again below, so this listener must go with it
+    removeEventListener('keydown', onKey);
     answers.push(selected);
     if (answers.length < puzzle.messages.length) showQuestion();
     else submit();
   };
-  app.append(options, lock);
+  const hint = el('button', 'Hint');
+  hint.className = 'hintbtn';
+  hint.onclick = () => {
+    const context = puzzle.hints?.[i] ?? {};
+    if (!context.before && !context.after) {
+      hint.disabled = true;
+      hint.textContent = 'No surrounding messages';
+      return;
+    }
+    if (context.before) before.append(contextMessage(context.before));
+    if (context.after) after.append(contextMessage(context.after));
+    hint.remove();
+  };
+  const lockRow = el('div');
+  lockRow.className = 'lockrow';
+  lockRow.append(hint, lock);
+  app.append(options, lockRow);
 }
 
 async function submit() {
@@ -180,7 +319,7 @@ async function submit() {
   }
 }
 
-// one attachment per day instead of one per player: everyone's cards tiled
+// one attachment per day instead of one per playere, everyone's cards tiled
 // into a single image, rebuilt by whoever publishes last
 async function compositeImage(cards) {
   const W = 420;
@@ -284,6 +423,7 @@ async function resultsImage(score, right) {
 }
 
 async function showResults({ score, answers: given, correct, links, alreadyPlayed }) {
+  const byId = Object.fromEntries(puzzle.options.map((o) => [o.id, o]));
   const names = Object.fromEntries(puzzle.options.map((o) => [o.id, o.name]));
   const right = given.map((id, i) => id === correct[i]);
   const dataUrl = await resultsImage(score, right);
@@ -306,19 +446,45 @@ async function showResults({ score, answers: given, correct, links, alreadyPlaye
     app.append(row);
   }
 
+  // same Discord-message shape as the question, with the author revealed
   const cards = puzzle.messages.map((text, i) => {
-    const card = el('div');
-    card.className = `result ${right[i] ? 'right' : 'wrong'}`;
-    card.hidden = true;
-    const verdict = el('p', `${right[i] ? 'PASS' : 'FAIL'} ${names[correct[i]]}${right[i] ? '' : `, YOU guessed ${names[given[i]]}`}`);
-    verdict.className = 'verdict';
-    card.append(el('blockquote', text), verdict);
+    const author = byId[correct[i]];
+    const who = el('div');
+    who.className = 'who';
+    const face = new Image();
+    face.src = avatarUrl(correct[i], author?.avatar, AVATAR_SIZE);
+    who.append(face);
+
+    const head = el('div');
+    head.className = 'head';
+    if (!right[i]) {
+      const missed = el('span', names[given[i]]);
+      missed.className = 'name bad';
+      head.append(missed);
+    }
+    const actual = el('span', names[correct[i]]);
+    actual.className = 'name good';
+    const stamp = el('span', messageTime(puzzle.times?.[i]));
+    stamp.className = 'stamp';
+    head.append(actual, stamp);
+
+    const body = el('div');
+    body.className = 'body';
+    body.append(head, renderMessage(text));
     if (links?.[i]) {
       const jump = el('button', 'Jump to message...');
       jump.className = 'jump';
       jump.onclick = () => sdk.commands.openExternalLink({ url: links[i] });
-      verdict.append(' ', jump);
+      const jumpRow = el('div');
+      jumpRow.className = 'jumprow';
+      jumpRow.append(jump);
+      body.append(jumpRow);
     }
+
+    const card = el('div');
+    card.className = 'msg';
+    card.hidden = true;
+    card.append(who, body);
     return card;
   });
 
@@ -348,6 +514,7 @@ async function main() {
   await auth();
   status('Loading puzzle...');
   puzzle = await api('puzzle');
+  preloadPuzzle(puzzle);
   if (puzzle.played) await showResults({ ...puzzle.played, alreadyPlayed: true });
   else showQuestion();
 }

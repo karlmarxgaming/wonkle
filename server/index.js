@@ -15,6 +15,19 @@ import {
 const { DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_BOT_TOKEN, GUILD_ID, PORT = 3001 } = process.env;
 const DEBUG = process.env.DEBUG === 'true';
 
+// 100 messages per page. discord.js queues requests to respect Discord's
+// 50/sec global limit, so paging deep is safe; this only bounds cold-start time.
+const HISTORY_PAGES = 5;
+// Difficulty ramp: the first message is long and quotable, the last is terse.
+const MIN_LENGTHS = [100, 78, 55, 33, 10];
+// Only applies when TEST_ALLOW_SAME_AUTHOR is off.
+const MAX_PER_AUTHOR = 2;
+
+// TEST: lets all 5 messages come from the same author.
+const TEST_ALLOW_SAME_AUTHOR = false;
+// TEST: lets a player replay (overwrites their stored play instead of blocking).
+const TEST_ALLOW_REPLAY = true;
+
 const db = new Database(fileURLToPath(new URL('wonkle.db', import.meta.url)));
 db.exec(`
   CREATE TABLE IF NOT EXISTS puzzles (
@@ -38,6 +51,7 @@ db.exec(`
 `);
 const getPuzzleRow = db.prepare('SELECT data FROM puzzles WHERE date = ?');
 const insertPuzzle = db.prepare('INSERT INTO puzzles (date, data) VALUES (?, ?)');
+const updatePuzzle = db.prepare('UPDATE puzzles SET data = ? WHERE date = ?');
 const getPlay = db.prepare('SELECT score, answers FROM plays WHERE puzzle_date = ? AND user_id = ?');
 const upsertPlay = db.prepare('INSERT OR REPLACE INTO plays (puzzle_date, user_id, username, score, answers) VALUES (?, ?, ?, ?, ?)');
 const getPost = db.prepare('SELECT channel_id, message_id FROM posts WHERE puzzle_date = ?');
@@ -63,12 +77,55 @@ function getPuzzle() {
 
 async function loadPuzzle(date) {
   const row = getPuzzleRow.get(date);
-  if (row) return JSON.parse(row.data);
+  if (row) {
+    const puzzle = JSON.parse(row.data);
+    // rows written before hints were prefetched
+    if (puzzle.messages.some((m) => !m.hint)) {
+      await addHints(puzzle);
+      updatePuzzle.run(JSON.stringify(puzzle), date);
+      console.log(`backfilled hints for ${date}`);
+    }
+    return puzzle;
+  }
   const puzzle = await buildPuzzle();
+  await addHints(puzzle);
   insertPuzzle.run(date, JSON.stringify(puzzle));
   console.log(`built puzzle for ${date}`);
   return puzzle;
 }
+
+// Prefetched once per puzzle rather than per player asking, so the hint is
+// instant and its images can be preloaded by the client.
+async function addHints(puzzle) {
+  for (const msg of puzzle.messages) {
+    msg.hint = msg.messageId ? await neighbours(msg.channelId, msg.messageId) : { before: null, after: null };
+  }
+}
+
+async function neighbours(channelId, messageId) {
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel) return { before: null, after: null };
+  const grab = async (direction) => {
+    const batch = await channel.messages.fetch({ limit: 1, [direction]: messageId }).catch(() => null);
+    const m = batch?.first();
+    return m
+      ? {
+          id: m.author.id,
+          name: m.member?.displayName ?? m.author.displayName,
+          avatar: m.author.avatar,
+          text: m.content,
+          images: [...m.attachments.values()]
+            .filter((a) => a.contentType?.startsWith('image/'))
+            .slice(0, 4)
+            .map((a) => a.url),
+        }
+      : null;
+  };
+  return { before: await grab('before'), after: await grab('after') };
+}
+
+const messageTimes = (puzzle) =>
+  puzzle.messages.map((m) => (m.messageId ? Number(BigInt(m.messageId) >> 22n) + 1420070400000 : null));
 
 const messageLinks = (puzzle) =>
   puzzle.messages.map((m) => (m.messageId ? `https://discord.com/channels/${GUILD_ID}/${m.channelId}/${m.messageId}` : null));
@@ -85,13 +142,19 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
-// TEST: lets all 5 messages come from the same author.
-const TEST_ALLOW_SAME_AUTHOR = false;
-// TEST: lets a player replay (overwrites their stored play instead of blocking).
-const TEST_ALLOW_REPLAY = false;
+// messages used on a previous day never come back
+function usedMessageIds() {
+  const ids = new Set();
+  for (const row of db.prepare('SELECT data FROM puzzles').all()) {
+    for (const m of JSON.parse(row.data).messages) if (m.messageId) ids.add(m.messageId);
+  }
+  return ids;
+}
 
 async function buildPuzzle() {
   const guild = await client.guilds.fetch(GUILD_ID);
+  const used = usedMessageIds();
+  const shortest = MIN_LENGTHS.at(-1);
   const candidates = [];
   const names = new Map();
   const channels = await guild.channels.fetch();
@@ -99,30 +162,50 @@ async function buildPuzzle() {
     if (channel?.type !== ChannelType.GuildText) continue;
     const perms = channel.permissionsFor(guild.members.me);
     if (!perms.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory])) continue;
-    const messages = await channel.messages.fetch({ limit: 100 });
-    for (const msg of messages.values()) {
-      // NOTE: at some point we might want to uncomment this... 
-      // if (msg.author.bot || msg.content.length < 100) continue;
-      if (msg.author.bot) continue;
-      if (msg.attachments.size || msg.embeds.length) continue;
-      if (/https?:\/\//i.test(msg.content)) continue;
-      if (msg.mentions.users.size || msg.mentions.roles.size || msg.mentions.channels.size || msg.mentions.everyone) continue;
-      candidates.push({ text: msg.content, authorId: msg.author.id, channelId: channel.id, messageId: msg.id });
-      names.set(msg.author.id, { name: msg.member?.displayName ?? msg.author.displayName, avatar: msg.author.avatar });
+    let before;
+    for (let page = 0; page < HISTORY_PAGES; page++) {
+      const batch = await channel.messages.fetch({ limit: 100, ...(before && { before }) });
+      if (!batch.size) break;
+      before = batch.last().id;
+      for (const msg of batch.values()) {
+        if (msg.author.bot || used.has(msg.id)) continue;
+        if (msg.content.length < shortest) continue;
+        if (msg.attachments.size || msg.embeds.length) continue;
+        if (/https?:\/\//i.test(msg.content)) continue;
+        if (msg.mentions.users.size || msg.mentions.roles.size || msg.mentions.channels.size || msg.mentions.everyone) continue;
+        candidates.push({ text: msg.content, authorId: msg.author.id, channelId: channel.id, messageId: msg.id });
+        names.set(msg.author.id, { name: msg.member?.displayName ?? msg.author.displayName, avatar: msg.author.avatar });
+      }
+      if (batch.size < 100) break; // reached the start of the channel
     }
   }
+
+  const pool = shuffle(candidates);
+  const perAuthor = new Map();
+  const cap = TEST_ALLOW_SAME_AUTHOR ? MIN_LENGTHS.length : MAX_PER_AUTHOR;
   const picked = [];
-  const usedAuthors = new Set();
-  for (const msg of shuffle(candidates)) {
-    if (usedAuthors.has(msg.authorId) && !TEST_ALLOW_SAME_AUTHOR) continue;
-    usedAuthors.add(msg.authorId);
+  const underCap = (m) => (perAuthor.get(m.authorId) ?? 0) < cap;
+  for (const min of MIN_LENGTHS) {
+    let at = pool.findIndex((m) => m.text.length >= min && underCap(m));
+    // too few long messages to fill this slot: settle for the longest left
+    if (at === -1) {
+      at = pool.reduce(
+        (best, m, i) => (underCap(m) && (best < 0 || m.text.length > pool[best].text.length) ? i : best),
+        -1,
+      );
+    }
+    if (at === -1) break;
+    const [msg] = pool.splice(at, 1);
+    perAuthor.set(msg.authorId, (perAuthor.get(msg.authorId) ?? 0) + 1);
     picked.push(msg);
-    if (picked.length === 5) break;
   }
-  if (picked.length < 5) {
-    throw new Error(`need 5 puzzle messages, found ${picked.length} (${candidates.length} eligible messages in scan)`);
+  if (picked.length < MIN_LENGTHS.length) {
+    throw new Error(
+      `need ${MIN_LENGTHS.length} puzzle messages, found ${picked.length} (${candidates.length} unused candidates in scan)`,
+    );
   }
-  // Red herrings are other authors seen in the scan 
+  const usedAuthors = new Set(picked.map((m) => m.authorId));
+  // Red herrings are other authors seen in the scan
   // NOTE: listing arbitrary guild members would require the privileged GuildMembers intent.
   const herrings = shuffle([...names.keys()].filter((id) => !usedAuthors.has(id))).slice(0, 3);
   return {
@@ -225,6 +308,8 @@ app.get('/api/puzzle', requireUser, async (req, res) => {
   const prior = TEST_ALLOW_REPLAY ? null : getPlay.get(date, req.user.id);
   res.json({
     messages: puzzle.messages.map((m) => m.text),
+    times: messageTimes(puzzle),
+    hints: puzzle.messages.map((m) => m.hint ?? { before: null, after: null }),
     options: puzzle.options,
     played: prior
       ? { score: prior.score, answers: JSON.parse(prior.answers), correct: puzzle.messages.map((m) => m.authorId), links: messageLinks(puzzle) }

@@ -65,7 +65,7 @@
       border: 2px solid #000;
       border-radius: 6px;
       background: #000;
-      color: #fff;
+      color: #dffcde;
     }
     button {
       font: inherit;
@@ -83,18 +83,20 @@
     button:active:not(:disabled) { box-shadow: none; transform: translate(2px, 2px); }
     button:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
     button.selected { background: #000; color: #fff; }
-    .result {
-      border: 2px solid #000;
-      border-left: 6px solid #2f7a2a;
-      background: #c1f2bf;
-      border-radius: 0 10px 10px 0;
-      padding: 0.75rem 1rem;
-      margin: 1.25rem 0;
+    .options { display: flex; flex-wrap: wrap; justify-content: center; margin: 1.25rem 0 1.75rem; }
+    .lockrow { display: flex; justify-content: flex-end; }
+    .hintbtn { margin-right: auto; }
+    .msg.ctx { opacity: 0.5; font-size: 0.9em; }
+    .thumbs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+    #app .thumbs img {
+      width: auto;
+      max-width: 140px;
+      max-height: 110px;
+      margin: 0;
+      border: 1px solid #dffcde;
+      border-radius: 4px;
     }
-    .result.wrong { border-left-color: #c02626; }
-    .result blockquote { margin: 0 0 0.5rem; padding: 0; border: none; background: none; color: #000; }
-    .verdict { margin: 0; font-weight: bold; color: #2f7a2a; }
-    .result.wrong .verdict { color: #c02626; }
+    .lock { background: #000; color: #fff; }
     .jump {
       background: none;
       border: none;
@@ -125,6 +127,47 @@
       border-radius: 50%;
       vertical-align: -0.4em;
     }
+    #app .emoji {
+      display: inline-block;
+      width: 1.4em;
+      height: 1.4em;
+      margin: 0;
+      border: none;
+      border-radius: 0;
+      vertical-align: -0.35em;
+    }
+    .msg { display: flex; align-items: flex-start; gap: 0.6rem; margin: 1rem 0; }
+    .msg[hidden] { display: none; }
+    .who {
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.5rem;
+      height: 2.5rem;
+      font-size: 1.3rem;
+      overflow: hidden;
+      background: #000;
+      border: 2px solid #000;
+      border-radius: 50%;
+    }
+    #app .who img { display: block; width: 100%; height: 100%; margin: 0; border: none; border-radius: 50%; }
+    .body {
+      flex: 1;
+      min-width: 0;
+      padding: 0.6rem 1rem 0.75rem;
+      background: #000;
+      color: #dffcde;
+      border: 2px solid #000;
+      border-radius: 6px;
+    }
+    .head { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.15rem; }
+    .name { font-weight: bold; color: #fff; }
+    .name.good { color: #6aaa64; }
+    .name.bad { color: #e06666; font-weight: normal; text-decoration: line-through; opacity: 0.6; }
+    .stamp { font-size: 0.7rem; color: #7f9a7f; }
+    .jumprow { display: flex; justify-content: flex-end; margin-top: 0.35rem; }
+    .body blockquote { margin: 0; padding: 0; border: none; border-radius: 0; background: none; color: inherit; }
     .others { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; margin: 1rem 0 1.5rem; }
     #app .others img { width: 200px; margin: 0; border-width: 2px; border-radius: 8px; }
     footer { font-family: 'Coral Pixels', sans-serif; text-align: center; font-size: 0.7rem; color: #5a6e5a; margin-top: 2.5rem; }
