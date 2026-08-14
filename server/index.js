@@ -271,6 +271,13 @@ const CONTEXTS = [
   InteractionContextType.PrivateChannel,
 ];
 
+const REPLY_COMMANDS = {
+  sex: {
+    description: 'sex',
+    content: 'https://media.tenor.com/xEwboaSfmV8AAAAi/chase-antiba.gif',
+  },
+};
+
 // every name here becomes a "/" command that opens the Activity
 const ACTIVITY_COMMANDS = ['play', 'wonkle'];
 
@@ -286,6 +293,13 @@ const COMMANDS = [
   ...ACTIVITY_COMMANDS.map((name) => ({
     name,
     description: DESCRIPTION,
+    type: ApplicationCommandType.ChatInput,
+    integrationTypes: INTEGRATION_TYPES,
+    contexts: CONTEXTS,
+  })),
+  ...Object.entries(REPLY_COMMANDS).map(([name, { description }]) => ({
+    name,
+    description,
     type: ApplicationCommandType.ChatInput,
     integrationTypes: INTEGRATION_TYPES,
     contexts: CONTEXTS,
@@ -338,6 +352,15 @@ client.once(Events.ClientReady, async () => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
+  
+  const reply = REPLY_COMMANDS[interaction.commandName];
+  if (reply) {
+    await interaction.reply({ content: reply.content }).catch((err) =>
+      console.error(`failed to reply to /${interaction.commandName}:`, err),
+    );
+    return;
+  }
+
   if (!ACTIVITY_COMMANDS.includes(interaction.commandName)) return;
   try {
     await launchActivity(interaction);
