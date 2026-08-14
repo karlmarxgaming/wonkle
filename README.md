@@ -9,3 +9,5 @@ select guild which is to be gamed with, only works if players are authorized to 
 something something npm run build -w client -- --watch  for vite following client changes something npm start for bot and app and serving vite /dist and serve on cloudflare tunnel (for now)
 
 todo: write stuff about bot please chat gpt make no mistakes.
+
+Project Sponsored by Oracle | DigitalOcean | Palantir: Software that Dominates.
