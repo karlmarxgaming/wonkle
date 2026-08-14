@@ -10,6 +10,10 @@ import {
   PermissionFlagsBits,
   ApplicationCommandType,
   EntryPointCommandHandlerType,
+  ApplicationIntegrationType,
+  InteractionContextType,
+  MessageFlags,
+  Routes,
 } from 'discord.js';
 
 const { DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_BOT_TOKEN, GUILD_ID, PORT = 3001 } = process.env;
@@ -64,11 +68,41 @@ const upsertPost = db.prepare('INSERT OR REPLACE INTO posts (puzzle_date, channe
 const setPlayImage = db.prepare('UPDATE plays SET image = ? WHERE puzzle_date = ? AND user_id = ?');
 const getResults = db.prepare('SELECT user_id, score, image FROM plays WHERE puzzle_date = ? AND image IS NOT NULL ORDER BY score DESC, username');
 
-// Everyone shares one puzzle per day, so the rollover has to happen at a single
-// fixed moment rather than in each player's own timezone: midnight US Pacific.
-const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+const dateIn = (days) =>
+  new Date(Date.now() + days * 86_400_000).toLocaleDateString('en-CA', {
+    timeZone: 'America/Los_Angeles',
+  });
+const today = () => dateIn(0);
+const tomorrow = () => dateIn(1);
 
 let cache = { date: null, promise: null };
+
+function msUntilRollover() {
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date());
+  const n = (t) => Number(p.find((x) => x.type === t).value);
+  const h = n('hour') % 24; // hour12:false puede devolver 24 a medianoche
+  return ((23 - h) * 3600 + (59 - n('minute')) * 60 + (60 - n('second'))) * 1000;
+}
+
+async function warm() {
+  try {
+    await getPuzzle();
+    await loadPuzzle(tomorrow());
+  } catch (err) {
+    console.error('failed to warm puzzles:', err);
+    setTimeout(warm, 60_000).unref();
+  }
+}
+
+function scheduleRollover() {
+  setTimeout(async () => {
+    await warm();
+    scheduleRollover();
+  }, msUntilRollover() + 1_000).unref();
+}
 
 function getPuzzle() {
   const date = today();
@@ -219,36 +253,104 @@ async function buildPuzzle() {
   };
 }
 
-client.once(Events.ClientReady, async () => {
-  console.log(`logged in as ${client.user.tag}`);
-  const command = {
-    name: 'wonkle',
-    description: "Play today's Wonkle",
+// ---------------------------------------------------------------------------
+//   Entry Point command (type 4) is what the blue button in the App
+//   CHAT_INPUT commands (type 1) are the ones that show up when you type "/"
+// ---------------------------------------------------------------------------
+
+const DESCRIPTION = "Play today's Wonkle";
+
+const INTEGRATION_TYPES = [
+  ApplicationIntegrationType.GuildInstall,
+  ApplicationIntegrationType.UserInstall,
+];
+
+const CONTEXTS = [
+  InteractionContextType.Guild,
+  InteractionContextType.BotDM,
+  InteractionContextType.PrivateChannel,
+];
+
+// every name here becomes a "/" command that opens the Activity
+const ACTIVITY_COMMANDS = ['play', 'wonkle'];
+
+const COMMANDS = [
+  {
+    name: 'launch',
+    description: DESCRIPTION,
     type: ApplicationCommandType.PrimaryEntryPoint,
     handler: EntryPointCommandHandlerType.DiscordLaunchActivity,
-  };
+    integrationTypes: INTEGRATION_TYPES,
+    contexts: CONTEXTS,
+  },
+  ...ACTIVITY_COMMANDS.map((name) => ({
+    name,
+    description: DESCRIPTION,
+    type: ApplicationCommandType.ChatInput,
+    integrationTypes: INTEGRATION_TYPES,
+    contexts: CONTEXTS,
+  })),
+];
+
+const canonical = (c) =>
+  JSON.stringify({
+    name: c.name,
+    description: c.description,
+    type: c.type,
+    handler: c.handler ?? null,
+    integrationTypes: [...(c.integrationTypes ?? [])].sort(),
+    contexts: [...(c.contexts ?? [])].sort(),
+  });
+
+async function registerCommands() {
+  const existing = await client.application.commands.fetch();
+  const want = COMMANDS.map(canonical).sort();
+  const have = [...existing.values()].map(canonical).sort();
+  if (JSON.stringify(want) === JSON.stringify(have)) {
+    console.log(`commands already registered: ${COMMANDS.map((c) => c.name).join(', ')}`);
+    return;
+  }
+  await client.application.commands.set(COMMANDS);
+  console.log(`registered commands: ${COMMANDS.map((c) => c.name).join(', ')}`);
+}
+
+async function launchActivity(interaction) {
+  if (typeof interaction.launchActivity === 'function') {
+    return interaction.launchActivity();
+  }
+  return client.rest.post(Routes.interactionCallback(interaction.id, interaction.token), {
+    body: { type: 12, data: {} },
+    auth: false,
+  });
+}
+
+client.once(Events.ClientReady, async () => {
+  console.log(`logged in as ${client.user.tag}`);
   try {
-    const existing = await client.application.commands.fetch();
-    const matches =
-      existing.size === 1 &&
-      existing.every(
-        (c) =>
-          c.name === command.name &&
-          c.description === command.description &&
-          c.type === command.type &&
-          c.handler === command.handler,
-      );
-    if (matches) {
-      console.log('/wonkle already registered');
-    } else {
-      await client.application.commands.set([command]);
-      console.log('registered /wonkle');
-    }
+    await registerCommands();
   } catch (err) {
-    console.error('failed to register /wonkle:', err);
+    console.error('failed to register commands:', err);
   }
   // warm the cache so the first player of the day doesn't wait on the scan
-  await getPuzzle().catch((err) => console.error('failed to build puzzle:', err));
+  await warm();
+  scheduleRollover();
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (!ACTIVITY_COMMANDS.includes(interaction.commandName)) return;
+  try {
+    await launchActivity(interaction);
+  } catch (err) {
+    console.error(`failed to launch activity for /${interaction.commandName}:`, err);
+    if (interaction.replied || interaction.deferred) return;
+    await interaction
+      .reply({
+        content: 'No pude abrir la actividad.',
+        flags: MessageFlags.Ephemeral,
+      })
+      .catch(() => {});
+  }
 });
 
 const userCache = new Map();
